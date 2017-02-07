@@ -45,6 +45,7 @@ module Yesod.Auth.GoogleEmail2
     , Place(..)
     , Email(..)
     , EmailType(..)
+    , pid
     ) where
 
 import           Yesod.Auth               (Auth, AuthPlugin (AuthPlugin),
