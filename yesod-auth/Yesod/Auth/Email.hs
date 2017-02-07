@@ -31,24 +31,24 @@
 -- = Using JSON Endpoints
 --
 -- We are assuming that you have declared auth route as follows
--- 
+--
 -- @
 --    /auth AuthR Auth getAuth
 -- @
--- 
+--
 -- If you are using a different route, then you have to adjust the
 -- endpoints accordingly.
 --
 --     * Registration
--- 
+--
 -- @
 --       Endpoint: \/auth\/page\/email\/register
 --       Method: POST
 --       JSON Data: { "email": "myemail@domain.com" }
 -- @
--- 
+--
 --     * Forgot password
---  
+--
 -- @
 --       Endpoint: \/auth\/page\/email\/forgot-password
 --       Method: POST
@@ -56,16 +56,16 @@
 -- @
 --
 --     * Login
---  
+--
 -- @
 --       Endpoint: \/auth\/page\/email\/login
 --       Method: POST
---       JSON Data: { 
+--       JSON Data: {
 --                      "email": "myemail@domain.com",
 --                      "password": "myStrongPassword"
 --                  }
 -- @
--- 
+--
 --     * Set new password
 --
 -- @
@@ -358,9 +358,6 @@ emailLoginHandler toParent = do
                     <div>
                         <button type=submit .btn .btn-success>
                             _{Msg.LoginViaEmail}
-                        &nbsp;
-                        <a href="@{toParent registerR}" .btn .btn-default>
-                            _{Msg.RegisterLong}
         |]
   where
     loginForm extra = do
@@ -455,12 +452,12 @@ registerHelper allowUsername dest = do
     pidentifier <- lookupPostParam "email"
     midentifier <- case pidentifier of
                      Nothing -> do
-                       (jidentifier :: Result Value) <- lift parseJsonBody                                     
+                       (jidentifier :: Result Value) <- lift parseJsonBody
                        case jidentifier of
                          Error _ -> return Nothing
                          Success val -> return $ parseMaybe parseEmail val
                      Just _ -> return pidentifier
-                                  
+
     let eidentifier = case midentifier of
                           Nothing -> Left Msg.NoIdentifierProvided
                           Just x
@@ -519,7 +516,7 @@ defaultForgotPasswordHandler = do
   where
     forgotPasswordForm extra = do
         (emailRes, emailView) <- mreq emailField emailSettings Nothing
-    
+
         let forgotPasswordRes = ForgotPasswordForm <$> emailRes
         let widget = do
             [whamlet|
@@ -586,7 +583,7 @@ postLoginR = do
     result <- lift $ runInputPostResult $ (,)
         <$> ireq textField "email"
         <*> ireq textField "password"
-    
+
     midentifier <- case result of
                      FormSuccess (iden, pass) -> return $ Just (iden, pass)
                      _ -> do
@@ -594,7 +591,7 @@ postLoginR = do
                        case creds of
                          Error _ -> return Nothing
                          Success val -> return $ parseMaybe parseCreds val
-                                              
+
     case midentifier of
       Nothing -> loginErrorMessageI LoginR Msg.NoIdentifierProvided
       Just (identifier, pass) -> do
@@ -781,7 +778,7 @@ postPasswordR = do
 
                      mr <- lift getMessageRender
                      selectRep $ do
-                         provideRep $ 
+                         provideRep $
                             fmap asHtml $ lift $ redirect $ afterPasswordRoute y
                          provideJsonMessage (mr msgOk)
 
