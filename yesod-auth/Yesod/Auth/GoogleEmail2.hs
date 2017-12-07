@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP               #-}
 {-# LANGUAGE FlexibleContexts  #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes       #-}
@@ -21,7 +22,7 @@
 --
 -- * Enable the Google+ API.
 --
--- Since 1.3.1
+-- @since 1.3.1
 module Yesod.Auth.GoogleEmail2
     ( -- * Authentication handlers
       authGoogleEmail
@@ -45,6 +46,7 @@ module Yesod.Auth.GoogleEmail2
     , Place(..)
     , Email(..)
     , EmailType(..)
+    -- * Other functions
     , pid
     ) where
 
@@ -60,7 +62,7 @@ import           Yesod.Core               (HandlerSite, HandlerT, MonadHandler,
                                            lift, liftIO, lookupGetParam,
                                            lookupSession, notFound, redirect,
                                            setSession, whamlet, (.:),
-                                           addMessage, getYesod, authRoute,
+                                           addMessage, getYesod,
                                            toHtml)
 
 
@@ -72,7 +74,11 @@ import           Control.Monad.IO.Class   (MonadIO)
 import qualified Crypto.Nonce             as Nonce
 import           Data.Aeson               ((.:?))
 import qualified Data.Aeson               as A
+#if MIN_VERSION_aeson(1,0,0)
+import qualified Data.Aeson.Text          as A
+#else
 import qualified Data.Aeson.Encode        as A
+#endif
 import           Data.Aeson.Parser        (json')
 import           Data.Aeson.Types         (FromJSON (parseJSON), parseEither,
                                            parseMaybe, withObject, withText)
@@ -86,14 +92,19 @@ import qualified Data.Text                as T
 import           Data.Text.Encoding       (decodeUtf8, encodeUtf8)
 import qualified Data.Text.Lazy           as TL
 import qualified Data.Text.Lazy.Builder   as TL
-import           Network.HTTP.Client      (Manager, parseUrl, requestHeaders,
+import           Network.HTTP.Client      (Manager, requestHeaders,
                                            responseBody, urlEncodedBody)
+import qualified Network.HTTP.Client      as HTTP
 import           Network.HTTP.Client.Conduit (Request, bodyReaderSource)
 import           Network.HTTP.Conduit (http)
 import           Network.HTTP.Types       (renderQueryText)
 import           System.IO.Unsafe         (unsafePerformIO)
 
 
+-- | Plugin identifier. This is used to identify the plugin used for
+-- authentication. The 'credsPlugin' will contain this value when this
+-- plugin is used for authentication.
+-- @since 1.4.17
 pid :: Text
 pid = "googleemail2"
 
@@ -134,7 +145,7 @@ authGoogleEmail = authPlugin False
 -- | An alternative version which stores user access token in the session
 --   variable. Use it if you want to request user's profile from your app.
 --
--- Since 1.4.3
+-- @since 1.4.3
 authGoogleEmailSaveToken :: YesodAuth m
                          => Text -- ^ client ID
                          -> Text -- ^ client secret
@@ -168,7 +179,7 @@ authPlugin storeToken clientID clientSecret =
         return $ decodeUtf8
                $ toByteString
                $ fromByteString "https://accounts.google.com/o/oauth2/auth"
-                    `mappend` renderQueryText True qs
+                    `Data.Monoid.mappend` renderQueryText True qs
 
     login tm = do
         [whamlet|<a href=@{tm forwardUrl}>_{Msg.LoginGoogle}|]
@@ -207,7 +218,13 @@ authPlugin storeToken clientID clientSecret =
 
         render <- getUrlRender
 
-        req' <- liftIO $ parseUrl "https://accounts.google.com/o/oauth2/token" -- FIXME don't hardcode, use: https://accounts.google.com/.well-known/openid-configuration
+        req' <- liftIO $
+#if MIN_VERSION_http_client(0,4,30)
+            HTTP.parseUrlThrow
+#else
+            HTTP.parseUrl
+#endif
+            "https://accounts.google.com/o/oauth2/token" -- FIXME don't hardcode, use: https://accounts.google.com/.well-known/openid-configuration
         let req =
                 urlEncodedBody
                     [ ("code", encodeUtf8 code)
@@ -255,7 +272,7 @@ makeHttpRequest req = lift $
 --   In case of parsing error returns 'Nothing'.
 --   Will throw 'HttpException' in case of network problems or error response code.
 --
--- Since 1.4.3
+-- @since 1.4.3
 getPerson :: Manager -> Token -> HandlerT site IO (Maybe Person)
 getPerson manager token = parseMaybe parseJSON <$> (do
     req <- personValueRequest token
@@ -265,7 +282,13 @@ getPerson manager token = parseMaybe parseJSON <$> (do
 
 personValueRequest :: MonadIO m => Token -> m Request
 personValueRequest token = do
-    req2' <- liftIO $ parseUrl "https://www.googleapis.com/plus/v1/people/me"
+    req2' <- liftIO $
+#if MIN_VERSION_http_client(0,4,30)
+            HTTP.parseUrlThrow
+#else
+            HTTP.parseUrl
+#endif
+        "https://www.googleapis.com/plus/v1/people/me"
     return req2'
             { requestHeaders =
                 [ ("Authorization", encodeUtf8 $ "Bearer " `mappend` accessToken token)
@@ -278,20 +301,20 @@ personValueRequest token = do
 --   'authGoogleEmailSaveToken'.
 --   You can acquire saved token with 'getUserAccessToken'.
 --
--- Since 1.4.3
+-- @since 1.4.3
 data Token = Token { accessToken :: Text
                    , tokenType   :: Text
                    } deriving (Show, Eq)
 
 instance FromJSON Token where
     parseJSON = withObject "Tokens" $ \o -> Token
-        <$> o .: "access_token"
-        <*> o .: "token_type"
+        Control.Applicative.<$> o .: "access_token"
+        Control.Applicative.<*> o .: "token_type"
 
 --------------------------------------------------------------------------------
 -- | Gender of the person
 --
--- Since 1.4.3
+-- @since 1.4.3
 data Gender = Male | Female | OtherGender deriving (Show, Eq)
 
 instance FromJSON Gender where
@@ -303,7 +326,7 @@ instance FromJSON Gender where
 --------------------------------------------------------------------------------
 -- | URIs specified in the person's profile
 --
--- Since 1.4.3
+-- @since 1.4.3
 data PersonURI =
     PersonURI { uriLabel :: Maybe Text
               , uriValue :: Maybe Text
@@ -318,7 +341,7 @@ instance FromJSON PersonURI where
 --------------------------------------------------------------------------------
 -- | The type of URI
 --
--- Since 1.4.3
+-- @since 1.4.3
 data PersonURIType = OtherProfile       -- ^ URI for another profile
                    | Contributor        -- ^ URI to a site for which this person is a contributor
                    | Website            -- ^ URI for this Google+ Page's primary website
@@ -337,7 +360,7 @@ instance FromJSON PersonURIType where
 --------------------------------------------------------------------------------
 -- | Current or past organizations with which this person is associated
 --
--- Since 1.4.3
+-- @since 1.4.3
 data Organization =
     Organization { orgName      :: Maybe Text
                    -- ^ The person's job title or role within the organization
@@ -364,7 +387,7 @@ instance FromJSON Organization where
 --------------------------------------------------------------------------------
 -- | The type of an organization
 --
--- Since 1.4.3
+-- @since 1.4.3
 data OrganizationType = Work
                       | School
                       | OrganizationType Text -- ^ Something else
@@ -378,7 +401,7 @@ instance FromJSON OrganizationType where
 --------------------------------------------------------------------------------
 -- | A place where the person has lived or is living at the moment.
 --
--- Since 1.4.3
+-- @since 1.4.3
 data Place =
     Place { -- | A place where this person has lived. For example: "Seattle, WA", "Near Toronto".
             placeValue   :: Maybe Text
@@ -392,7 +415,7 @@ instance FromJSON Place where
 --------------------------------------------------------------------------------
 -- | Individual components of a name
 --
--- Since 1.4.3
+-- @since 1.4.3
 data Name =
     Name { -- | The full name of this person, including middle names, suffixes, etc
            nameFormatted       :: Maybe Text
@@ -419,7 +442,7 @@ instance FromJSON Name where
 --------------------------------------------------------------------------------
 -- | The person's relationship status.
 --
--- Since 1.4.3
+-- @since 1.4.3
 data RelationshipStatus = Single              -- ^ Person is single
                         | InRelationship      -- ^ Person is in a relationship
                         | Engaged             -- ^ Person is engaged
@@ -448,7 +471,7 @@ instance FromJSON RelationshipStatus where
 --------------------------------------------------------------------------------
 -- | The URI of the person's profile photo.
 --
--- Since 1.4.3
+-- @since 1.4.3
 newtype PersonImage = PersonImage { imageUri :: Text } deriving (Show, Eq)
 
 instance FromJSON PersonImage where
@@ -458,7 +481,7 @@ instance FromJSON PersonImage where
 --   the image under the URI. If for some reason you need to modify the query
 --   part, you should do it after resizing.
 --
--- Since 1.4.3
+-- @since 1.4.3
 resizePersonImage :: PersonImage -> Int -> PersonImage
 resizePersonImage (PersonImage uri) size =
     PersonImage $ uri `mappend` "?sz=" `mappend` T.pack (show size)
@@ -467,7 +490,7 @@ resizePersonImage (PersonImage uri) size =
 -- | Information about the user
 --   Full description of the resource https://developers.google.com/+/api/latest/people
 --
--- Since 1.4.3
+-- @since 1.4.3
 data Person = Person
     { personId                 :: Text
       -- | The name of this person, which is suitable for display
@@ -537,7 +560,7 @@ instance FromJSON Person where
 --------------------------------------------------------------------------------
 -- | Person's email
 --
--- Since 1.4.3
+-- @since 1.4.3
 data Email = Email
     { emailValue :: Text
     , emailType  :: EmailType
@@ -552,7 +575,7 @@ instance FromJSON Email where
 --------------------------------------------------------------------------------
 -- | Type of email
 --
--- Since 1.4.3
+-- @since 1.4.3
 data EmailType = EmailAccount   -- ^ Google account email address
                | EmailHome      -- ^ Home email address
                | EmailWork      -- ^ Work email adress

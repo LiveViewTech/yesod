@@ -12,6 +12,9 @@ import Yesod.Routes.TH.Types
 import Language.Haskell.TH (conT)
 #endif
 import Language.Haskell.TH.Syntax
+#if MIN_VERSION_template_haskell(2,11,0)
+import Data.Bits (xor)
+#endif
 import Data.Maybe (maybeToList)
 import Control.Monad (replicateM)
 import Data.Text (pack)
@@ -46,7 +49,9 @@ mkRouteCons rttypes =
 
     mkRouteCon (ResourceParent name _check pieces children) = do
         (cons, decs) <- mkRouteCons children
-#if MIN_VERSION_template_haskell(2,11,0)
+#if MIN_VERSION_template_haskell(2,12,0)
+        dec <- DataD [] (mkName name) [] Nothing cons <$> fmap (pure . DerivClause Nothing) (mapM conT [''Show, ''Read, ''Eq])
+#elif MIN_VERSION_template_haskell(2,11,0)
         dec <- DataD [] (mkName name) [] Nothing cons <$> mapM conT [''Show, ''Read, ''Eq]
 #else
         let dec = DataD [] (mkName name) [] cons [''Show, ''Read, ''Eq]
@@ -153,17 +158,29 @@ mkRenderRouteInstance' :: Cxt -> Type -> [ResourceTree Type] -> Q [Dec]
 mkRenderRouteInstance' cxt typ ress = do
     cls <- mkRenderRouteClauses ress
     (cons, decs) <- mkRouteCons ress
-#if MIN_VERSION_template_haskell(2,11,0)
-    did <- DataInstD [] ''Route [typ] Nothing cons <$> mapM conT clazzes
+#if MIN_VERSION_template_haskell(2,12,0)
+    did <- DataInstD [] ''Route [typ] Nothing cons <$> fmap (pure . DerivClause Nothing) (mapM conT (clazzes False))
+    let sds = fmap (\t -> StandaloneDerivD Nothing cxt $ ConT t `AppT` ( ConT ''Route `AppT` typ)) (clazzes True)
+#elif MIN_VERSION_template_haskell(2,11,0)
+    did <- DataInstD [] ''Route [typ] Nothing cons <$> mapM conT (clazzes False)
+    let sds = fmap (\t -> StandaloneDerivD cxt $ ConT t `AppT` ( ConT ''Route `AppT` typ)) (clazzes True)
 #else
-    let did = DataInstD [] ''Route [typ] cons clazzes
+    let did = DataInstD [] ''Route [typ] cons clazzes'
+    let sds = []
 #endif
     return $ instanceD cxt (ConT ''RenderRoute `AppT` typ)
         [ did
         , FunD (mkName "renderRoute") cls
-        ] : decs
+        ]
+        : sds ++ decs
   where
-    clazzes = [''Show, ''Eq, ''Read]
+#if MIN_VERSION_template_haskell(2,11,0)
+    clazzes standalone = if standalone `xor` null cxt then
+          clazzes'
+        else
+          []
+#endif
+    clazzes' = [''Show, ''Eq, ''Read]
 
 #if MIN_VERSION_template_haskell(2,11,0)
 notStrict :: Bang

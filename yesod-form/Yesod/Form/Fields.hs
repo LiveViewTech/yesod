@@ -63,12 +63,10 @@ import Yesod.Form.Types
 import Yesod.Form.I18n.English
 import Yesod.Form.Functions (parseHelper)
 import Yesod.Core
-import Text.Hamlet
 import Text.Blaze (ToMarkup (toMarkup), unsafeByteString)
 #define ToHtml ToMarkup
 #define toHtml toMarkup
 #define preEscapedText preEscapedToMarkup
-import Text.Cassius
 import Data.Time (Day, TimeOfDay(..))
 import qualified Text.Email.Validate as Email
 import Data.Text.Encoding (encodeUtf8, decodeUtf8With)
@@ -78,7 +76,7 @@ import Database.Persist.Sql (PersistField, PersistFieldSql (..))
 #if MIN_VERSION_persistent(2,5,0)
 import Database.Persist (Entity (..), SqlType (SqlString), PersistRecordBackend, PersistQueryRead)
 #else
-import Database.Persist (Entity (..), SqlType (SqlString))
+import Database.Persist (Entity (..), SqlType (SqlString), PersistEntity, PersistQuery, PersistEntityBackend)
 #endif
 import Text.HTML.SanitizeXSS (sanitizeBalance)
 import Control.Monad (when, unless)
@@ -88,7 +86,6 @@ import Data.Maybe (listToMaybe, fromMaybe)
 import qualified Blaze.ByteString.Builder.Html.Utf8 as B
 import Blaze.ByteString.Builder (writeByteString, toLazyByteString)
 import Blaze.ByteString.Builder.Internal.Write (fromWriteList)
-import Database.Persist (PersistEntityBackend)
 
 import Text.Blaze.Html.Renderer.String (renderHtml)
 import qualified Data.ByteString as S
@@ -96,11 +93,11 @@ import qualified Data.ByteString.Lazy as L
 import Data.Text as T ( Text, append, concat, cons, head
                       , intercalate, isPrefixOf, null, unpack, pack, splitOn
                       )
-import qualified Data.Text as T (drop, dropWhile)  
+import qualified Data.Text as T (drop, dropWhile)
 import qualified Data.Text.Read
 
 import qualified Data.Map as Map
-import Yesod.Persist (selectList, runDB, Filter, SelectOpt, Key, YesodPersist, PersistEntity, PersistQuery)
+import Yesod.Persist (selectList, Filter, SelectOpt, Key)
 import Control.Arrow ((&&&))
 
 import Control.Applicative ((<$>), (<|>))
@@ -108,6 +105,10 @@ import Control.Applicative ((<$>), (<|>))
 import Data.Attoparsec.Text (Parser, char, string, digit, skipSpace, endOfInput, parseOnly)
 
 import Yesod.Persist.Core
+
+#if !MIN_VERSION_base(4,8,0)
+import Data.Monoid
+#endif
 
 defaultFormMessage :: FormMessage -> Text
 defaultFormMessage = englishFormMessage
@@ -229,6 +230,7 @@ instance ToHtml Textarea where
         . unTextarea
       where
         -- Taken from blaze-builder and modified with newline handling.
+        writeHtmlEscapedChar '\r' = mempty
         writeHtmlEscapedChar '\n' = writeByteString "<br>"
         writeHtmlEscapedChar c    = B.writeHtmlEscapedChar c
 
@@ -270,9 +272,9 @@ $newline never
 passwordField :: Monad m => RenderMessage (HandlerSite m) FormMessage => Field m Text
 passwordField = Field
     { fieldParse = parseHelper $ Right
-    , fieldView = \theId name attrs val isReq -> toWidget [hamlet|
+    , fieldView = \theId name attrs _ isReq -> toWidget [hamlet|
 $newline never
-<input id="#{theId}" name="#{name}" *{attrs} type="password" :isReq:required="" value="#{either id id val}">
+<input id="#{theId}" name="#{name}" *{attrs} type="password" :isReq:required="">
 |]
     , fieldEnctype = UrlEncoded
     }
@@ -323,7 +325,7 @@ timeParser = do
   where
     hour = do
         x <- digit
-        y <- (return <$> digit) <|> return []
+        y <- (return Control.Applicative.<$> digit) <|> return []
         let xy = x : y
         let i = read xy
         if i < 0 || i >= 24
@@ -442,13 +444,13 @@ $newline never
 |]) -- inside
 
 -- | Creates a @\<select>@ tag for selecting multiple options.
-multiSelectFieldList :: (Eq a, RenderMessage site FormMessage, RenderMessage site msg)
+multiSelectFieldList :: (Eq a, RenderMessage site msg)
                      => [(msg, a)]
                      -> Field (HandlerT site IO) [a]
 multiSelectFieldList = multiSelectField . optionsPairs
 
 -- | Creates a @\<select>@ tag for selecting multiple options.
-multiSelectField :: (Eq a, RenderMessage site FormMessage)
+multiSelectField :: Eq a
                  => HandlerT site IO (OptionList a)
                  -> Field (HandlerT site IO) [a]
 multiSelectField ioptlist =
@@ -480,17 +482,17 @@ radioFieldList :: (Eq a, RenderMessage site FormMessage, RenderMessage site msg)
 radioFieldList = radioField . optionsPairs
 
 -- | Creates an input with @type="checkbox"@ for selecting multiple options.
-checkboxesFieldList :: (Eq a, RenderMessage site FormMessage, RenderMessage site msg) => [(msg, a)]
+checkboxesFieldList :: (Eq a, RenderMessage site msg) => [(msg, a)]
                      -> Field (HandlerT site IO) [a]
 checkboxesFieldList = checkboxesField . optionsPairs
 
 -- | Creates an input with @type="checkbox"@ for selecting multiple options.
-checkboxesField :: (Eq a, RenderMessage site FormMessage)
+checkboxesField :: Eq a
                  => HandlerT site IO (OptionList a)
                  -> Field (HandlerT site IO) [a]
 checkboxesField ioptlist = (multiSelectField ioptlist)
     { fieldView =
-        \theId name attrs val isReq -> do
+        \theId name attrs val _isReq -> do
             opts <- fmap olOptions $ handlerToWidget ioptlist
             let optselected (Left _) _ = False
                 optselected (Right vals) opt = (optionInternalValue opt) `elem` vals
@@ -572,7 +574,7 @@ $newline never
 --
 --   Note that this makes the field always optional.
 --
-checkBoxField :: Monad m => RenderMessage (HandlerSite m) FormMessage => Field m Bool
+checkBoxField :: Monad m => Field m Bool
 checkBoxField = Field
     { fieldParse = \e _ -> return $ checkBoxParser e
     , fieldView  = \theId name attrs val _ -> [whamlet|
@@ -760,7 +762,7 @@ selectFieldHelper outside onOpt inside opts' = Field
                     Just y -> Right $ Just y
 
 -- | Creates an input with @type="file"@.
-fileField :: (Monad m, RenderMessage (HandlerSite m) FormMessage)
+fileField :: Monad m
           => Field m FileInfo
 fileField = Field
     { fieldParse = \_ files -> return $
@@ -806,7 +808,6 @@ $newline never
     return (res, (fv :), ints', Multipart)
 
 fileAFormOpt :: MonadHandler m
-             => RenderMessage (HandlerSite m) FormMessage
              => FieldSettings (HandlerSite m)
              -> AForm m (Maybe FileInfo)
 fileAFormOpt fs = AForm $ \(master, langs) menvs ints -> do

@@ -105,7 +105,7 @@ data Creds master = Creds
     { credsPlugin :: Text -- ^ How the user was authenticated
     , credsIdent :: Text -- ^ Identifier. Exact meaning depends on plugin.
     , credsExtra :: [(Text, Text)]
-    }
+    } deriving (Show)
 
 class (Yesod master, PathPiece (AuthId master), RenderMessage master FormMessage) => YesodAuth master where
     type AuthId master
@@ -167,7 +167,7 @@ class (Yesod master, PathPiece (AuthId master), RenderMessage master FormMessage
     -- >             lift $ redirect HomeR   -- or any other Handler code you want
     -- >         defaultLoginHandler
     -- 
-    loginHandler :: AuthHandler master Html
+    loginHandler :: HandlerT Auth (HandlerT master IO) Html
     loginHandler = defaultLoginHandler
 
     -- | Used for i18n of messages provided by this package.
@@ -227,7 +227,7 @@ class (Yesod master, PathPiece (AuthId master), RenderMessage master FormMessage
     --  This is an experimental API that is not broadly used throughout the yesod-auth code base
     runHttpRequest :: Request -> (Response BodyReader -> HandlerT master IO a) -> HandlerT master IO a
     runHttpRequest req inner = do
-      man <- authHttpManager <$> getYesod
+      man <- authHttpManager Control.Applicative.<$> getYesod
       HandlerT $ \t -> withResponse req man $ \res -> unHandlerT (inner res) t
 
     {-# MINIMAL loginDest, logoutDest, (authenticate | getAuthId), authPlugins, authHttpManager #-}
@@ -243,7 +243,8 @@ credsKey = "_ID"
 -- | Retrieves user credentials from the session, if user is authenticated.
 --
 -- This function does /not/ confirm that the credentials are valid, see
--- 'maybeAuthIdRaw' for more information.
+-- 'maybeAuthIdRaw' for more information. The first call in a request
+-- does a database request to make sure that the account is still in the database.
 --
 -- Since 1.1.2
 defaultMaybeAuthId

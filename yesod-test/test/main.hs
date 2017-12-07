@@ -6,6 +6,13 @@
 {-# LANGUAGE QuasiQuotes #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
+module Main
+    ( main
+    -- avoid warnings
+    , resourcesRoutedApp
+    , Widget
+    ) where
 
 import Test.HUnit hiding (Test)
 import Test.Hspec
@@ -22,16 +29,18 @@ import Control.Applicative
 import Network.Wai (pathInfo, requestHeaders)
 import Data.Maybe (fromMaybe)
 import Data.Either (isLeft, isRight)
-import Control.Exception.Lifted(try, SomeException)
 
 import Data.ByteString.Lazy.Char8 ()
 import qualified Data.Map as Map
 import qualified Text.HTML.DOM as HD
 import Network.HTTP.Types.Status (status301, status303, unsupportedMediaType415)
+import Control.Exception.Lifted(SomeException, try)
 
+parseQuery_ :: Text -> [[SelectorGroup]]
 parseQuery_ = either error id . parseQuery
+
+findBySelector_ :: HtmlLBS -> Query -> [String]
 findBySelector_ x = either error id . findBySelector x
-parseHtml_ = HD.parseLBS
 
 data RoutedApp = RoutedApp
 
@@ -86,7 +95,7 @@ main = hspec $ do
                             [NodeContent "Hello World"]
                         ]
                     ]
-             in parseHtml_ html @?= doc
+             in HD.parseLBS html @?= doc
         it "HTML" $
             let html = "<html><head><title>foo</title></head><body><br><p>Hello World</p></body></html>"
                 doc = Document (Prologue [] Nothing []) root []
@@ -101,7 +110,7 @@ main = hspec $ do
                             [NodeContent "Hello World"]
                         ]
                     ]
-             in parseHtml_ html @?= doc
+             in HD.parseLBS html @?= doc
     describe "basic usage" $ yesodSpec app $ do
         ydescribe "tests1" $ do
             yit "tests1a" $ do
@@ -141,6 +150,18 @@ main = hspec $ do
                     addToken
                 statusIs 200
                 bodyEquals "12345"
+            yit "labels WForm" $ do
+                get ("/wform" :: Text)
+                statusIs 200
+
+                request $ do
+                    setMethod "POST"
+                    setUrl ("/wform" :: Text)
+                    byLabel "Some WLabel" "12345"
+                    fileByLabel "Some WFile" "test/main.hs" "text/plain"
+                    addToken
+                statusIs 200
+                bodyEquals "12345"
             yit "finding html" $ do
                 get ("/html" :: Text)
                 statusIs 200
@@ -161,6 +182,16 @@ main = hspec $ do
                     addToken_ "body"
                 statusIs 200
                 bodyEquals "12345"
+            yit "can follow a link via clickOn" $ do
+              get ("/htmlWithLink" :: Text)
+              clickOn "a#thelink"
+              statusIs 200
+              bodyEquals "<html><head><title>Hello</title></head><body><p>Hello World</p><p>Hello Moon</p></body></html>"
+
+              get ("/htmlWithLink" :: Text)
+              (bad :: Either SomeException ()) <- try (clickOn "a#nonexistentlink")
+              assertEq "bad link" (isLeft bad) True
+
 
         ydescribe "utf8 paths" $ do
             yit "from path" $ do
@@ -310,14 +341,25 @@ app = liteApp $ do
         ((mfoo, widget), _) <- runFormPost
                         $ renderDivs
                         $ (,)
-                      <$> areq textField "Some Label" Nothing
+                      Control.Applicative.<$> areq textField "Some Label" Nothing
                       <*> areq fileField "Some File" Nothing
         case mfoo of
             FormSuccess (foo, _) -> return $ toHtml foo
             _ -> defaultLayout widget
+    onStatic "wform" $ dispatchTo $ do
+        ((mfoo, widget), _) <- runFormPost $ renderDivs $ wFormToAForm $ do
+          field1F <- wreq textField "Some WLabel" Nothing
+          field2F <- wreq fileField "Some WFile" Nothing
+
+          return $ (,) Control.Applicative.<$> field1F <*> field2F
+        case mfoo of
+            FormSuccess (foo, _) -> return $ toHtml foo
+            _                    -> defaultLayout widget
     onStatic "html" $ dispatchTo $
         return ("<html><head><title>Hello</title></head><body><p>Hello World</p><p>Hello Moon</p></body></html>" :: Text)
 
+    onStatic "htmlWithLink" $ dispatchTo $
+        return ("<html><head><title>A link</title></head><body><a href=\"/html\" id=\"thelink\">Link!</a></body></html>" :: Text)
     onStatic "labels" $ dispatchTo $
         return ("<html><label><input type='checkbox' name='fooname' id='foobar'>Foo Bar</label></html>" :: Text)
 
@@ -337,7 +379,7 @@ cookieApp = liteApp $ do
     onStatic "cookie" $ do
         onStatic "foo" $ dispatchTo $ do
             setMessage "Foo"
-            redirect ("/cookie/home" :: Text)
+            () <- redirect ("/cookie/home" :: Text)
             return ()
 
 instance Yesod RoutedApp where

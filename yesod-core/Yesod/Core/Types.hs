@@ -175,8 +175,13 @@ type BottomOfHeadAsync master
 
 type Texts = [Text]
 
--- | Wrap up a normal WAI application as a Yesod subsite.
+-- | Wrap up a normal WAI application as a Yesod subsite. Ignore parent site's middleware and isAuthorized.
 newtype WaiSubsite = WaiSubsite { runWaiSubsite :: W.Application }
+
+-- | Like 'WaiSubsite', but applies parent site's middleware and isAuthorized.
+-- 
+-- @since 1.4.34
+newtype WaiSubsiteWithAuth = WaiSubsiteWithAuth { runWaiSubsiteWithAuth :: W.Application }
 
 data RunHandlerEnv site = RunHandlerEnv
     { rheRender   :: !(Route site -> [(Text, Text)] -> Text)
@@ -462,7 +467,12 @@ instance MonadMask m => MonadMask (WidgetT site m) where
     WidgetT $ \e -> uninterruptibleMask $ \u -> unWidgetT (a $ q u) e
       where q u (WidgetT b) = WidgetT (u . b)
 
+-- CPP to avoid a redundant constraints warning
+#if MIN_VERSION_base(4,9,0)
+instance (MonadIO m, MonadBase IO m, MonadThrow m) => MonadResource (WidgetT site m) where
+#else
 instance (Applicative m, MonadIO m, MonadBase IO m, MonadThrow m) => MonadResource (WidgetT site m) where
+#endif
     liftResourceT f = WidgetT $ \hd -> liftIO $ (, mempty) <$> runInternalState f (handlerResource hd)
 
 instance MonadIO m => MonadLogger (WidgetT site m) where
@@ -554,6 +564,14 @@ instance RenderRoute WaiSubsite where
     renderRoute (WaiSubsiteRoute ps qs) = (ps, qs)
 instance ParseRoute WaiSubsite where
     parseRoute (x, y) = Just $ WaiSubsiteRoute x y
+
+instance RenderRoute WaiSubsiteWithAuth where
+  data Route WaiSubsiteWithAuth = WaiSubsiteWithAuthRoute [Text] [(Text,Text)]
+       deriving (Show, Eq, Read, Ord)
+  renderRoute (WaiSubsiteWithAuthRoute ps qs) = (ps,qs)
+
+instance ParseRoute WaiSubsiteWithAuth where
+  parseRoute (x, y) = Just $ WaiSubsiteWithAuthRoute x y
 
 data Logger = Logger
     { loggerSet :: !LoggerSet
